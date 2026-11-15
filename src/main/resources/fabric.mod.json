@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "kizuna_agent",
+  "version": "${version}",
+  "name": "Kizuna Agent",
+  "description": "游戏内 AI 助手：基于 pi agent，能执行指令、读写方块、查看各模组 JAR、跑 Python 建筑脚本",
+  "authors": ["Kizunad"],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": ["dev.kizuna.agent.AgentMod"],
+    "client": ["dev.kizuna.agent.client.AgentClient"]
+  },
+  "depends": {
+    "fabricloader": ">=0.20.1",
+    "minecraft": "26.2",
+    "java": ">=25",
+    "fabric-api": "*"
+  }
+}

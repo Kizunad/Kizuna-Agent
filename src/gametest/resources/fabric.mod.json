@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "id": "kizuna_agent_gametest",
+  "version": "1.0.0",
+  "environment": "*",
+  "entrypoints": {
+    "fabric-gametest": ["dev.kizuna.agent.gametest.BridgeGameTest"]
+  },
+  "depends": {"kizuna_agent": "*"}
+}

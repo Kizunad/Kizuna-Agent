@@ -1,0 +1,35 @@
+# Kizuna Agent：游戏内 AI 助手的全部设置都在这一个文件里。改完重新进一次世界生效。
+# 游戏里用法：/agent <要它做什么>；/agent status 看这里哪一项还没配好。
+
+[model]
+# 模型接口的协议：openai-completions（最通用）、openai-responses、anthropic-messages、google-generative-ai
+api = "openai-completions"
+# 接口地址，例如 http://127.0.0.1:8317/v1
+base_url = ""
+# 密钥。只写在这里；不会写进日志，也不会写进别的文件
+api_key = ""
+# 模型名，例如 gemini-3.8-flash-high
+model = ""
+# 备用模型（同一个接口地址和密钥）。主模型报 429 或额度用尽时自动换它重试，并在聊天栏说一声；留空就不换
+fallback_model = ""
+# 思考强度：off、minimal、low、medium、high。接口不认这个参数就留 off
+thinking = "off"
+# 模型的上下文长度（token）。对话接近这个长度时自动压缩前文
+context_window = 200000
+
+[runtime]
+# Node.js 的位置（要 22.19 以上）。留空自动找：PATH、常见安装位置
+node = ""
+# Python 的位置，只在跑建筑脚本时用。留空自动找：Windows 上先试 py -3，再找 PATH 上的 python
+python = ""
+
+[tools]
+# 让助手动这台电脑：读写文件、跑 Python 脚本、跑 PowerShell（Linux 上是 bash）。
+# 关掉后助手只剩游戏内的工具：执行指令、读写方块、看模组 JAR
+local_code = true
+
+[bridge]
+# 游戏内接口监听的本机端口；0 表示每次随机挑一个
+port = 0
+# 批量放方块时每个 tick 最多占多少毫秒。调大放得快，调太大游戏会卡
+blocks_per_tick_millis = 10

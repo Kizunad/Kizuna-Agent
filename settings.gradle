@@ -1,0 +1,12 @@
+pluginManagement {
+    repositories {
+        maven { url = 'https://maven.fabricmc.net/' }
+        gradlePluginPortal()
+        mavenCentral()
+    }
+}
+
+// 第三方版本由 Framework 的工作区脚本提供（libs）；本仓不组合、不读取任何别的仓。
+apply from: new File(rootDir.parentFile, 'Kizuna-Meridian-Mod-Framework/scripts/workspace.gradle')
+
+rootProject.name = 'kizuna-agent'

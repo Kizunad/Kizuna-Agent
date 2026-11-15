@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "kizuna_agent_client_test",
+  "version": "1.0.0",
+  "name": "助手真客户端验收",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": ["dev.kizuna.agent.clienttest.AgentClientTest"]
+  },
+  "depends": {"fabric-api": "*", "kizuna_agent": "*"}
+}

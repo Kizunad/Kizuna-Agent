@@ -1,0 +1,127 @@
+plugins {
+    alias(libs.plugins.fabric.loom)
+}
+
+group = 'dev.kizuna'
+version = '0.1.0-SNAPSHOT'
+
+// JAR 里带的 pi 运行文件的版本：scripts/pack_pi.py 打出 runtime/pi-<版本>.zip，解压目录按这个版本分开。
+def piVersion = '0.85.1'
+
+repositories { mavenCentral() }
+
+sourceSets {
+    gametest {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += sourceSets.main.runtimeClasspath + sourceSets.main.output
+    }
+    clientTest {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += sourceSets.main.runtimeClasspath + sourceSets.main.output
+    }
+}
+
+dependencies {
+    // 26.x 不混淆：直接用官方名编译，没有映射。
+    minecraft libs.minecraft
+    implementation libs.fabric.loader
+    implementation libs.fabric.api
+    // 配置文件是 TOML；解析库随模组自带，同版本由加载器去重。
+    implementation libs.tomlj
+    include libs.tomlj
+    implementation libs.antlr.runtime
+    include libs.antlr.runtime
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly libs.junit.launcher
+}
+
+java {
+    toolchain.languageVersion = JavaLanguageVersion.of(libs.versions.java.get())
+    withSourcesJar()
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.release = libs.versions.java.get().toInteger()
+    options.encoding = 'UTF-8'
+}
+
+tasks.withType(JavaExec).configureEach {
+    javaLauncher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(libs.versions.java.get()) }
+}
+
+test { useJUnitPlatform() }
+
+processResources {
+    inputs.property 'version', project.version
+    inputs.property 'piVersion', piVersion
+    filesMatching(['fabric.mod.json', 'kizuna-agent/runtime.properties']) {
+        expand version: project.version, piVersion: piVersion
+    }
+    // pi 运行文件和它各依赖的许可证：整包进 JAR，第一次用时解到实例目录。
+    from("runtime/pi-${piVersion}.zip") { into 'kizuna-agent' }
+    from('runtime/licenses') { into 'META-INF/licenses' }
+}
+
+jar { from('LICENSE') }
+
+loom {
+    mods {
+        kizuna_agent { sourceSet sourceSets.main }
+        kizuna_agent_gametest { sourceSet sourceSets.gametest }
+        kizuna_agent_client_test { sourceSet sourceSets.clientTest }
+    }
+    runs {
+        gametest {
+            server()
+            source sourceSets.gametest
+            runDir 'build/gametest'
+            vmArg '-Dfabric-api.gametest'
+            vmArg '-Dfabric-api.gametest.report-file=../gametest-results.xml'
+        }
+        clientGametest {
+            client()
+            name '助手真客户端验收'
+            source sourceSets.clientTest
+            runDir 'build/clienttest'
+            vmArg '-Dfabric.client.gametest'
+            vmArg '-Dfabric.client.gametest.modid=kizuna_agent_client_test'
+            vmArg '-Dkizuna.agent.clientTest.report=../clienttest-results.txt'
+            // -PagentScene=live：接真的 pi 和配置里的模型，让它盖东西、查 JAR，隔几 tick 拍一张；不带就用假 pi 走一遍界面。
+            vmArg "-Dkizuna.agent.clientTest.scene=${providers.gradleProperty('agentScene').getOrElse('fake')}"
+            // live 场景可以换模型和要它做的事：-PagentModel=、-PagentFallback=、-PagentBuild=、-PagentLookup=。
+            ['model', 'fallback', 'build', 'lookup'].each { name ->
+                def value = providers.gradleProperty("agent${name.capitalize()}").orNull
+                if (value != null) {
+                    vmArg "-Dkizuna.agent.clientTest.${name}=${value}"
+                }
+            }
+            programArgs '--width', '1280', '--height', '720'
+        }
+    }
+}
+
+tasks.named('runGametest') {
+    doFirst {
+        // 每局从空目录新建世界：旧目录只会累积上一局的区块和存档。
+        file('build/gametest/world').deleteDir()
+    }
+}
+
+tasks.named('runClientGametest') {
+    def report = layout.buildDirectory.file('clienttest-results.txt')
+    doFirst {
+        report.get().asFile.text = 'success=false\n'
+        // 跳过首启无障碍引导，界面用中文，与用户实例一致。
+        def runDirectory = file('build/clienttest')
+        runDirectory.mkdirs()
+        new File(runDirectory, 'options.txt').text = 'onboardAccessibility:false\nlang:zh_cn\n'
+        // -PagentExtraMods=a.jar,b.jar：再装几个别的模组的 JAR，给 live 场景里「查模组」用。
+        def extra = providers.gradleProperty('agentExtraMods').orNull
+        if (extra != null) {
+            copy {
+                from extra.split(',').collect { file(it) }
+                into new File(runDirectory, 'mods')
+            }
+        }
+    }
+}
