@@ -21,6 +21,51 @@ fallback_model = "gpt-6.1-terra"    # 主模型报 429 或额度用尽时自动�
 
 其余各项（Node 和 Python 的路径、关掉「动这台电脑」的开关、接口端口、放方块的速度）在生成的文件里都有注释。
 
+### 模型清单和思考档位
+
+想在游戏里换着用几个模型，就在配置里每个模型写一段 `[[models]]`：
+
+```toml
+[model]
+base_url = "http://127.0.0.1:8317/v1"
+api_key = "……"
+model = "gemini"            # 清单里的别名，或者直接写模型名
+fallback_model = "terra"
+thinking = "low"            # 清单里没单独写 thinking 的模型、不在清单里的模型用这一档
+
+[[models]]
+alias = "gemini"
+id = "gemini-3.8-flash-high"
+thinking_levels = { low = "low", medium = "medium", high = "high" }
+
+[[models]]
+alias = "terra"
+id = "gpt-6.1-terra"
+thinking = "medium"
+thinking_levels = { off = "none", low = "low", medium = "medium", high = "high", xhigh = "xhigh" }
+
+[[models]]
+alias = "claude"
+id = "claude-sonnet-4-6"
+thinking_levels = { off = "", low = "low", medium = "medium", high = "high" }
+```
+
+| 键 | 意思 |
+|---|---|
+| `alias` | 游戏里叫它的名字；不写就用 `id` |
+| `id` | 发给接口的模型名 |
+| `thinking` | 这个模型的思考档位；不写就用 `[model]` 的 |
+| `thinking_levels` | 这个模型认哪几档，每一档发给接口什么值（`reasoning_effort`） |
+| `api`、`base_url`、`api_key`、`context_window` | 这个模型自己的接口；不写就用 `[model]` 的 |
+
+`thinking_levels` 的三种写法：
+
+- **不写**：off、minimal、low、medium、high 五档，off 不发参数，其余照原名发。
+- **写一张表**：只有表里的档位能选；值是这一档发给接口的 `reasoning_effort`，`off = ""` 表示关思考时不发参数。接口不认某一档（比如 CPA 上的 GPT 不认 minimal）就别写它。
+- **写成 `{}`**：这个模型的思考档位由模型名决定，什么参数都不发，`/agent thinking` 对它不起作用。
+
+各个接口认哪几档要自己试：让模型算一道费脑子的题，看应答用量里的推理 token 数随档位变不变。
+
 ## 用
 
 | 指令 | 做什么 |
@@ -29,12 +74,15 @@ fallback_model = "gpt-6.1-terra"    # 主模型报 429 或额度用尽时自动�
 | `/agent stop` | 让它停下 |
 | `/agent new` | 开一段新对话 |
 | `/agent undo` | 撤回它上一次放的方块（连箱子里的东西一起还原），可以连着撤 |
-| `/agent status` | 模型、Node、Python、接口各自的状态；哪项没配好这里会说 |
-| `/agent model <名字>` | 换模型，下一句开始生效 |
+| `/agent status` | 模型、思考档位、模型清单、Node、Python、接口各自的状态；哪项没配好这里会说 |
+| `/agent model <名字>` | 换模型，下一句开始生效。名字是清单里的别名（按 Tab 补全），也可以直接写一个模型名 |
+| `/agent thinking <档>` | 调现在这个模型的思考档位，下一句开始生效，并写回配置文件。能用哪几档按 Tab 补全 |
 
 - 只在单人世界里可用，按世界主人的权限执行，不受「允许作弊」开关限制。
 - 助手说的话、每一步在做什么（灰色斜体）、出错（红色）都显示在聊天栏。
 - 退出世界时助手进程结束；再进世界会接着上次的对话。
+- 换清单里的模型不打断对话；换到一个不在清单里的模型名要重启助手进程，对话照样接着。
+- `/agent model`、`/agent thinking` 后面不跟东西时说现在用的是什么。
 
 ## 助手能用的工具
 
@@ -106,6 +154,8 @@ mc.undo()
 kz test   ~/Code/Kizuna-Agent           # 单测、构建、服务端 GameTest
 kz client ~/Code/Kizuna-Agent agent     # 真客户端验收：真的 pi 和桥接，模型是照剧本答话的假接口
 ```
+
+不开游戏单独试会话这一层（换模型、调档位、问一句），用 `src/test/java/dev/kizuna/agent/pi/SessionSmoke.java`，用法在它开头。
 
 接真模型录一段（要环境变量 `CLIPROXY_BASE_URL`、`CLIPROXY_API_KEY`）：
 

@@ -15,6 +15,7 @@ import java.io.Reader;
 import java.nio.CharBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -43,17 +44,18 @@ public final class PiProcess implements AutoCloseable {
     /**
      * 拉起 pi。
      *
-     * @param secret 不许出现在日志里的字符串（密钥）；为空串则不抹
+     * @param secrets 不许出现在日志里的字符串（各个接口的密钥）；空串不算
      * @param onEvent 每条事件或应答
      * @param onExit pi 进程结束时调一次，参数是退出码
      */
-    public static PiProcess start(List<String> command, Path directory, Map<String, String> environment, String secret,
-                                  Consumer<JsonObject> onEvent, IntConsumer onExit) throws IOException {
+    public static PiProcess start(List<String> command, Path directory, Map<String, String> environment,
+                                  Collection<String> secrets, Consumer<JsonObject> onEvent, IntConsumer onExit) throws IOException {
         var builder = new ProcessBuilder(command).directory(directory.toFile());
         builder.environment().putAll(environment);
         var started = new PiProcess(builder.start());
         thread("kizuna-agent-pi-events", () -> started.readEvents(onEvent, onExit));
-        thread("kizuna-agent-pi-errors", () -> started.readErrors(secret));
+        List<String> hidden = secrets.stream().filter(secret -> !secret.isEmpty()).distinct().toList();
+        thread("kizuna-agent-pi-errors", () -> started.readErrors(hidden));
         return started;
     }
 
@@ -121,12 +123,16 @@ public final class PiProcess implements AutoCloseable {
         }
     }
 
-    private void readErrors(String secret) {
+    private void readErrors(List<String> secrets) {
         try (var reader = new BufferedReader(new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
             for (String line = reader.readLine(); line != null; line = reader.readLine()) {
-                if (!line.isBlank()) {
-                    LOGGER.warn("pi：{}", secret.isEmpty() ? line : line.replace(secret, "***"));
+                if (line.isBlank()) {
+                    continue;
                 }
+                for (String secret : secrets) {
+                    line = line.replace(secret, "***");
+                }
+                LOGGER.warn("pi：{}", line);
             }
         } catch (IOException closed) {
             // 进程结束。

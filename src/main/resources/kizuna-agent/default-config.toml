@@ -8,14 +8,36 @@ api = "openai-completions"
 base_url = ""
 # 密钥。只写在这里；不会写进日志，也不会写进别的文件
 api_key = ""
-# 模型名，例如 gemini-3.8-flash-high
+# 进世界时用的模型：下面模型清单里的别名，或者直接写模型名，例如 gemini-3.8-flash-high
 model = ""
-# 备用模型（同一个接口地址和密钥）。主模型报 429 或额度用尽时自动换它重试，并在聊天栏说一声；留空就不换
+# 备用模型，写法同上。主模型报 429 或额度用尽时自动换它重试，并在聊天栏说一声；留空就不换
 fallback_model = ""
-# 思考强度：off、minimal、low、medium、high。接口不认这个参数就留 off
+# 思考档位：off、minimal、low、medium、high。清单里没单独写 thinking 的模型、不在清单里的模型用这一档
 thinking = "off"
 # 模型的上下文长度（token）。对话接近这个长度时自动压缩前文
 context_window = 200000
+
+# 模型清单：每个模型一段 [[models]]，想加几个加几个；不写清单也能用。
+# 游戏里 /agent model <别名> 换模型，/agent thinking <档> 调现在这个模型的思考档位（会写回这个文件），都能按 Tab 补全。
+#   alias            游戏里叫它的名字；不写就用 id
+#   id               发给接口的模型名
+#   thinking         这个模型的思考档位；不写就用上面 [model] 的
+#   thinking_levels  这个模型认哪几档，每一档发给接口什么值（reasoning_effort）。
+#                    不写：off、minimal、low、medium、high 五档，off 不发参数，其余照原名发。
+#                    off = "" 表示关思考时不发参数。
+#                    写成 {} 表示这个模型的思考档位由模型名决定，什么参数都不发，/agent thinking 对它不起作用。
+#   api、base_url、api_key、context_window  这个模型自己的接口；不写就用上面 [model] 的
+#
+# [[models]]
+# alias = "gemini"
+# id = "gemini-3.8-flash-high"
+# thinking = "low"
+#
+# [[models]]
+# alias = "sol"
+# id = "gpt-6.1-sol"
+# thinking = "medium"
+# thinking_levels = { off = "none", low = "low", medium = "medium", high = "high", xhigh = "xhigh" }
 
 [runtime]
 # Node.js 的位置（要 22.19 以上）。留空自动找：PATH、常见安装位置

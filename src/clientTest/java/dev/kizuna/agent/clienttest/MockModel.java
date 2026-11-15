@@ -15,6 +15,7 @@ import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -24,10 +25,20 @@ import java.util.regex.Pattern;
  *
  * <p>主模型一律回 429（额度用尽），逼助手换备用模型。备用模型按「已经收到几个工具结果」一步步来：
  * 看玩家位置 → 在玩家东边盖一个空心石砖壳 → 搜 JAR → 跑 Python 在壳顶放一块萤石 → 说结果。</p>
+ *
+ * <p>玩家的话里带「{@value #ROLL_CALL}」时不走剧本，哪个模型都直接答一句「到」并报这是第几次，
+ * 用来查换模型、调思考档位以后请求里的模型名和 {@code reasoning_effort}。</p>
  */
 final class MockModel implements AutoCloseable {
     static final String PRIMARY = "primary-model";
     static final String BACKUP = "backup-model";
+    /** 配置里哪儿都没写的模型 ID。 */
+    static final String UNLISTED = "unlisted-model";
+    static final String DEEP = "deep-model";
+    static final String FIXED = "fixed-model";
+    static final String ROLL_CALL = "报个到";
+    /** 请求里没带 {@code reasoning_effort} 时记成这个。 */
+    static final String NOT_SENT = "没发";
     static final String KEY = "mock-key-not-a-secret";
     static final String DONE = "盖好了：石砖小屋在你东边，屋顶有一块萤石。";
     private static final Gson GSON = new Gson();
@@ -36,6 +47,13 @@ final class MockModel implements AutoCloseable {
     private final HttpServer server;
     /** 收到的每个请求用的模型名，按先后。 */
     final List<String> requests = new CopyOnWriteArrayList<>();
+    /** 收到的每个请求带的 {@code reasoning_effort}，和 {@link #requests} 一一对应；没带记成 {@link #NOT_SENT}。 */
+    final List<String> efforts = new CopyOnWriteArrayList<>();
+    /** 收到的每个请求里玩家最后说的那句话，和 {@link #requests} 一一对应。 */
+    final List<String> asked = new CopyOnWriteArrayList<>();
+    /** 收到的每个请求里一共带了几条消息，和 {@link #requests} 一一对应。 */
+    final List<Integer> messages = new CopyOnWriteArrayList<>();
+    private final AtomicInteger rollCalls = new AtomicInteger();
     /** 请求头里带的密钥不对时记在这里。 */
     final List<String> problems = new CopyOnWriteArrayList<>();
 
@@ -58,6 +76,10 @@ final class MockModel implements AutoCloseable {
         try (exchange) {
             JsonObject request = JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
             String model = request.get("model").getAsString();
+            String said = lastUserText(request.getAsJsonArray("messages"));
+            efforts.add(request.has("reasoning_effort") ? request.get("reasoning_effort").getAsString() : NOT_SENT);
+            asked.add(said);
+            messages.add(request.getAsJsonArray("messages").size());
             requests.add(model);
             if (!("Bearer " + KEY).equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
                 problems.add("密钥没带对：" + exchange.getRequestHeaders().getFirst("Authorization"));
@@ -72,7 +94,8 @@ final class MockModel implements AutoCloseable {
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
             exchange.sendResponseHeaders(200, 0);
             OutputStream output = exchange.getResponseBody();
-            JsonObject step = step(request.getAsJsonArray("messages"));
+            JsonObject step = said.contains(ROLL_CALL) ? text(rollCall(rollCalls.incrementAndGet()))
+                    : step(request.getAsJsonArray("messages"));
             boolean tool = step.has("tool_calls");
             chunk(output, model, step, null);
             chunk(output, model, new JsonObject(), tool ? "tool_calls" : "stop");
@@ -81,6 +104,23 @@ final class MockModel implements AutoCloseable {
         } catch (RuntimeException failed) {
             problems.add("假模型出错：" + failed);
         }
+    }
+
+    /** 第几次点名时假模型答的话。 */
+    static String rollCall(int count) {
+        return "到，第 " + count + " 次";
+    }
+
+    private static String lastUserText(JsonArray messages) {
+        // 内容可能是一段文字，也可能是分块的数组；只用来找关键词，整个转成文字就行。
+        String said = "";
+        for (JsonElement element : messages) {
+            JsonObject message = element.getAsJsonObject();
+            if (message.get("role").getAsString().equals("user")) {
+                said = message.get("content").toString();
+            }
+        }
+        return said;
     }
 
     private static JsonObject step(JsonArray messages) {
