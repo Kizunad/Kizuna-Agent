@@ -9,10 +9,11 @@ import java.util.Map;
  * @param id 发给接口的模型名
  * @param thinking 这个模型的默认思考档位，已经落在 {@link #levels} 里
  * @param levels 这个模型认的思考档位 → 这一档发给接口的值，从少到多；空表表示思考档位由模型名决定、不发参数
+ * @param vision 这个模型能看图；不能看图的模型，截图只告诉它存在哪儿
  * @param listed 在配置的模型清单里
  */
 public record ModelChoice(String alias, String id, String api, String baseUrl, String apiKey, String thinking,
-                          Map<String, String> levels, int contextWindow, boolean listed) {
+                          Map<String, String> levels, int contextWindow, boolean vision, boolean listed) {
     /** 思考档位能调。 */
     public boolean adjustable() {
         return !levels.isEmpty();

@@ -3,13 +3,28 @@ package dev.kizuna.agent.gametest;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import dev.kizuna.agent.AgentMod;
 import dev.kizuna.agent.bridge.BridgeHost;
+import dev.kizuna.agent.marks.AgentItems;
+import dev.kizuna.agent.marks.Marks;
+import dev.kizuna.agent.marks.PointerItem;
 import net.fabricmc.fabric.api.gametest.v1.GameTest;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gametest.framework.GameTestHelper;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.contents.TranslatableContents;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
+import net.minecraft.world.item.Item;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.block.Blocks;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -239,19 +254,135 @@ public final class BridgeGameTest {
         });
     }
 
+    @GameTest(maxTicks = TIMEOUT_TICKS)
+    public void memorySkillsAndMarksAreServedOverTheBridge(GameTestHelper context) {
+        // 记忆、技能、标记这几组接口都挂在桥接上：存进去、读回来，「每句话开头带的那段」里马上就有。
+        ServerPlayer player = context.makeMockServerPlayerInLevel();
+        BlockPos origin = context.absolutePos(new BlockPos(1, 1, 1));
+        context.getLevel().setBlockAndUpdate(origin, Blocks.STONE_BRICKS.defaultBlockState());
+        run(context, player, true, (client, host) -> {
+            check(client.ok("memory/save", "{\"text\": \"屋顶用深色橡木\"}").get("number").getAsInt() == 1, "第一条记忆应是第 1 条");
+            check(client.ok("memory/list", "{}").getAsJsonArray("entries").size() == 1, "应列出 1 条记忆");
+            check(client.call("memory/forget", "{\"number\": 7}").status() == 400, "删不存在的记忆应报 400");
+            JsonObject saved = client.ok("skills/save", """
+                    {"name": "stone-watchtower", "description": "盖石砖瞭望塔", "body": "先看地面",
+                     "files": [{"path": "scripts/build.py", "content": "print('tower')"}]}""");
+            check(!saved.get("updated").getAsBoolean() && Files.isRegularFile(
+                            host.skills().root().resolve("stone-watchtower").resolve("scripts").resolve("build.py")),
+                    "技能和它带的脚本应写进技能库目录：" + saved);
+            check(client.ok("skills/read", "{\"name\": \"stone-watchtower\"}").get("text").getAsString().contains("先看地面"),
+                    "应读回技能正文");
+            check(client.call("skills/save", "{\"name\": \"../x\", \"description\": \"a\", \"body\": \"b\"}").status() == 400,
+                    "技能名不合规矩应报 400");
+
+            check(client.ok("marks", "{}").getAsJsonArray("marks").isEmpty(), "一开始没有标记");
+            host.marks().add(new Marks.Mark(origin.getX(), origin.getY(), origin.getZ(), "minecraft:overworld",
+                    "minecraft:stone_bricks", "up", Marks.Kind.BLOCK));
+            JsonObject mark = client.ok("marks", "{}").getAsJsonArray("marks").get(0).getAsJsonObject();
+            check(mark.get("number").getAsInt() == 1 && mark.get("block").toString().equals(array(origin).replace(" ", "")),
+                    "标记应带编号和坐标：" + mark);
+
+            String prompt = client.ok("context", "{}").get("prompt").getAsString();
+            check(prompt.contains("1. 屋顶用深色橡木") && prompt.contains("- stone-watchtower：盖石砖瞭望塔"),
+                    "每句话开头带的那段里应有刚存的记忆和技能：" + prompt);
+        });
+    }
+
+    @GameTest
+    public void pointerRecordsWhatWasClickedAndSaysSo(GameTestHelper context) {
+        // 指点杖记下的是：坐标、维度、那一格是什么方块、点的哪个面、怎么标的；回给玩家的话对得上编号。
+        ServerPlayer player = context.makeMockServerPlayerInLevel();
+        BlockPos bricks = context.absolutePos(new BlockPos(1, 1, 1));
+        BlockPos stairs = context.absolutePos(new BlockPos(3, 1, 1));
+        context.getLevel().setBlockAndUpdate(bricks, Blocks.STONE_BRICKS.defaultBlockState());
+        context.getLevel().setBlockAndUpdate(stairs, Blocks.OAK_STAIRS.defaultBlockState());
+        var marks = new Marks();
+
+        Component first = PointerItem.mark(marks, player, bricks, Direction.UP, Marks.Kind.BLOCK);
+        context.assertTrue(key(first).equals("kizuna_agent.pointer.marked") && argument(first, 0).equals(1)
+                && argument(first, 1).equals(bricks.getX()), "第一下应回「已标记 #1」和坐标，实际 " + first);
+        context.assertTrue(marks.list().getFirst().equals(new Marks.Mark(bricks.getX(), bricks.getY(), bricks.getZ(),
+                "minecraft:overworld", "minecraft:stone_bricks", "up", Marks.Kind.BLOCK)), "记下的标记不对：" + marks.list());
+
+        Component again = PointerItem.mark(marks, player, bricks, Direction.NORTH, Marks.Kind.BLOCK);
+        context.assertTrue(key(again).equals("kizuna_agent.pointer.already") && argument(again, 0).equals(1) && marks.list().size() == 1,
+                "同一格再点应说它已经是 #1，不重复记，实际 " + again);
+
+        Component far = PointerItem.mark(marks, player, stairs, Direction.WEST, Marks.Kind.DISTANT);
+        context.assertTrue(key(far).equals("kizuna_agent.pointer.marked_distant") && argument(far, 0).equals(2), "远处指的应是 #2，实际 " + far);
+        context.assertTrue(marks.list().get(1).state().startsWith("minecraft:oak_stairs[facing=") && marks.list().get(1).face().equals("west"),
+                "带属性的方块应连属性一起记，实际 " + marks.list().get(1));
+
+        Component feet = PointerItem.mark(marks, player, player.blockPosition(), null, Marks.Kind.FEET);
+        context.assertTrue(key(feet).equals("kizuna_agent.pointer.marked_feet") && marks.list().get(2).face().isEmpty()
+                && marks.list().get(2).kind() == Marks.Kind.FEET, "标脚下应是 #3、不带面，实际 " + feet);
+
+        for (int index = marks.list().size(); index < Marks.MAX; index++) {
+            PointerItem.mark(marks, player, bricks.above(index + 2), Direction.UP, Marks.Kind.BLOCK);
+        }
+        Component full = PointerItem.mark(marks, player, bricks.above(Marks.MAX + 5), Direction.UP, Marks.Kind.BLOCK);
+        context.assertTrue(key(full).equals("kizuna_agent.pointer.full") && marks.list().size() == Marks.MAX, "标满以后应说满了，实际 " + full);
+
+        Component cleared = PointerItem.clear(marks);
+        context.assertTrue(key(cleared).equals("kizuna_agent.pointer.cleared") && argument(cleared, 0).equals(Marks.MAX)
+                && marks.list().isEmpty(), "清空应说清掉了几个，实际 " + cleared);
+        context.assertTrue(key(PointerItem.clear(marks)).equals("kizuna_agent.pointer.nothing"), "没有标记时清空应说现在没有标记");
+        context.succeed();
+    }
+
+    @GameTest
+    public void pointerIsARegisteredItemThatDoesNothingForNonOwners(GameTestHelper context) {
+        // 物品注册上了、创造栏里有；不是单人世界主人的玩家拿着右键，什么都不记。
+        ServerPlayer player = context.makeMockServerPlayerInLevel();
+        Item pointer = AgentItems.pointer();
+        context.assertTrue(BuiltInRegistries.ITEM.getKey(pointer).equals(AgentItems.POINTER_ID), "指点杖应注册成 kizuna_agent:pointer");
+        context.assertTrue(BuiltInRegistries.CREATIVE_MODE_TAB.containsKey(Identifier.fromNamespaceAndPath(AgentItems.NAMESPACE, "main")),
+                "应有自己的创造栏");
+        int before = AgentMod.host().map(host -> host.marks().version()).orElse(0);
+        player.setItemInHand(InteractionHand.MAIN_HAND, new ItemStack(pointer));
+        context.assertTrue(pointer.use(context.getLevel(), player, InteractionHand.MAIN_HAND) == InteractionResult.CONSUME,
+                "服务端上右键应算处理过了");
+        context.assertTrue(AgentMod.host().map(host -> host.marks().version()).orElse(0) == before, "不是世界主人不该记下标记");
+        context.succeed();
+    }
+
+    private static String key(Component message) {
+        return message.getContents() instanceof TranslatableContents translated ? translated.getKey() : "";
+    }
+
+    private static Object argument(Component message, int index) {
+        return ((TranslatableContents) message.getContents()).getArgs()[index];
+    }
+
+    @FunctionalInterface
+    private interface HostScript {
+        void run(Client client, BridgeHost host);
+    }
+
+    private static void run(GameTestHelper context, ServerPlayer player, boolean owner, HostScript script) {
+        BridgeHost[] opened = new BridgeHost[1];
+        run(context, player, owner, TICK_MILLIS, opened, client -> script.run(client, opened[0]));
+    }
+
     private static void run(GameTestHelper context, ServerPlayer player, boolean owner, Script script) {
         run(context, player, owner, TICK_MILLIS, script);
     }
 
     private static void run(GameTestHelper context, ServerPlayer player, boolean owner, int tickMillis, Script script) {
+        run(context, player, owner, tickMillis, new BridgeHost[1], script);
+    }
+
+    private static void run(GameTestHelper context, ServerPlayer player, boolean owner, int tickMillis, BridgeHost[] opened,
+                            Script script) {
         // 起一套桥接，脚本在别的线程上跑完后关掉；用例每 tick 看结果：空串是通过，别的是失败原因。
         BridgeHost host;
         try {
             host = BridgeHost.open(context.getLevel().getServer(), () -> Optional.of(player), candidate -> owner, 0,
-                    tickMillis, null);
+                    tickMillis, null, Files.createTempDirectory("kizuna-agent-home"));
         } catch (IOException failed) {
             throw new IllegalStateException(failed);
         }
+        opened[0] = host;
         CompletableFuture<String> outcome = CompletableFuture.supplyAsync(() -> {
             try {
                 script.run(new Client(host));

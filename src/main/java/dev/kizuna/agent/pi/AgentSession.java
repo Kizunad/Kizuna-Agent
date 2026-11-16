@@ -281,11 +281,13 @@ public final class AgentSession implements AutoCloseable {
         }
         Executables.Tool node = Executables.node(config.runtime().node());
         say(Transcript.Kind.NOTE, "正在启动助手…");
-        PiRuntime.Layout layout = PiRuntime.prepare(data);
+        PiRuntime.Layout layout = PiRuntime.prepare(data, config.tools().localCode(), PiHome.shell(Executables.windows()));
         ModelChoice current = model;
         String thinking = level(current);
         endpoints = PiHome.endpoints(config, current);
         PiHome.write(layout.home(), config, endpoints, current, thinking, Executables.windows());
+        // 技能和记忆不走 pi 自己的扫描（--no-skills、--no-context-files）：pi 只在启动时读一次，还会顺着工作目录往上
+        // 把别处的 AGENTS.md 也读进来。这里由扩展每句话开头向游戏那头要现成的清单，接在系统提示词后面。
         var command = new ArrayList<>(node.command());
         command.addAll(List.of(layout.entry().toString(), "--session-dir", layout.sessions().toString(),
                 "--no-extensions", "--extension", layout.extension().toString(), "--no-skills",

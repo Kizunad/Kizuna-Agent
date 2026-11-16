@@ -36,9 +36,10 @@ public record AgentConfig(Model model, List<ModelChoice> models, Runtime runtime
      * @param model 进世界时用的模型：清单里的别名，或直接写模型 ID
      * @param fallbackModel 备用模型，写法同上；空串表示不换
      * @param thinking 清单里没单独写思考档位的模型用这一档
+     * @param vision 模型能看图；清单里没单独写的模型用这一项
      */
     public record Model(String api, String baseUrl, String apiKey, String model, String fallbackModel, String thinking,
-                        int contextWindow) {
+                        int contextWindow, boolean vision) {
 
         @Override
         public String toString() {
@@ -63,7 +64,7 @@ public record AgentConfig(Model model, List<ModelChoice> models, Runtime runtime
             "google-generative-ai");
     private static final Set<String> THINKING = Set.copyOf(ThinkingLevels.ALL);
     private static final Set<String> ENTRY_KEYS = Set.of("alias", "id", "thinking", "thinking_levels", "api", "base_url",
-            "api_key", "context_window");
+            "api_key", "context_window", "vision");
     private static final int MIN_CONTEXT = 1000;
     private static final int MAX_PORT = 65535;
     private static final int MAX_TICK_MILLIS = 45;
@@ -85,7 +86,7 @@ public record AgentConfig(Model model, List<ModelChoice> models, Runtime runtime
         }
         return new ModelChoice(name, name, model.api(), model.baseUrl(), model.apiKey(),
                 ThinkingLevels.fit(model.thinking(), ThinkingLevels.STANDARD.keySet()), ThinkingLevels.STANDARD,
-                model.contextWindow(), false);
+                model.contextWindow(), model.vision(), false);
     }
 
     /** 进世界时用的模型。 */
@@ -150,7 +151,7 @@ public record AgentConfig(Model model, List<ModelChoice> models, Runtime runtime
         var model = new Model(reader.choice("model.api", APIS), reader.text("model.base_url").strip(),
                 reader.text("model.api_key").strip(), reader.text("model.model").strip(),
                 reader.text("model.fallback_model").strip(), reader.choice("model.thinking", THINKING),
-                reader.integer("model.context_window", MIN_CONTEXT, Integer.MAX_VALUE));
+                reader.integer("model.context_window", MIN_CONTEXT, Integer.MAX_VALUE), reader.flag("model.vision"));
         var runtime = new Runtime(reader.text("runtime.node").strip(), reader.text("runtime.python").strip());
         var tools = new Tools(reader.flag("tools.local_code"));
         var bridge = new Bridge(reader.integer("bridge.port", 0, MAX_PORT),
@@ -209,7 +210,18 @@ public record AgentConfig(Model model, List<ModelChoice> models, Runtime runtime
             }
             Map<String, String> levels = levels();
             return new ModelChoice(alias, id, api, text("base_url", defaults.baseUrl()), text("api_key", defaults.apiKey()),
-                    thinking(levels, defaults.thinking()), levels, contextWindow(defaults.contextWindow()), true);
+                    thinking(levels, defaults.thinking()), levels, contextWindow(defaults.contextWindow()),
+                    vision(defaults.vision()), true);
+        }
+
+        private boolean vision(boolean otherwise) {
+            if (!table.contains("vision")) {
+                return otherwise;
+            }
+            if (!table.isBoolean("vision")) {
+                throw new IllegalArgumentException(where + "的 vision 要是 true 或 false");
+            }
+            return table.getBoolean("vision");
         }
 
         private String text(String key, String otherwise) {

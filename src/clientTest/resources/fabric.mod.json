@@ -7,5 +7,6 @@
   "entrypoints": {
     "fabric-client-gametest": ["dev.kizuna.agent.clienttest.AgentClientTest"]
   },
+  "mixins": ["kizuna_agent_client_test.mixins.json"],
   "depends": {"fabric-api": "*", "kizuna_agent": "*"}
 }

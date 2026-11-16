@@ -133,9 +133,12 @@ public final class PiHome {
         if (model.adjustable()) {
             entry.add("thinkingLevelMap", levelMap(model));
         }
+        // 不能看图的模型只登记文字输入：pi 发请求时会把图片换成一句说明。
         var input = new JsonArray();
         input.add("text");
-        input.add("image");
+        if (model.vision()) {
+            input.add("image");
+        }
         entry.add("input", input);
         entry.addProperty("contextWindow", model.contextWindow());
         return entry;
@@ -158,6 +161,11 @@ public final class PiHome {
         return map;
     }
 
+    /** 助手能用的 shell 工具：Windows 上是 PowerShell（那边通常没有 bash），别处是 bash。 */
+    public static String shell(boolean windows) {
+        return windows ? "powershell" : "bash";
+    }
+
     static JsonObject settings(AgentConfig config, List<Endpoint> endpoints, ModelChoice current, String thinking, boolean windows) {
         var settings = new JsonObject();
         settings.addProperty("defaultProvider", endpointOf(endpoints, current).orElseThrow().name());
@@ -165,10 +173,10 @@ public final class PiHome {
         settings.addProperty("defaultThinkingLevel", current.adjustable() ? thinking : ThinkingLevels.OFF);
         settings.addProperty("quietStartup", true);
         settings.addProperty("defaultProjectTrust", "never");
-        // 允许动这台电脑时给读写文件和一个 shell：Windows 上是 PowerShell（那边通常没有 bash），别处是 bash。
+        // 允许动这台电脑时给读写文件和一个 shell。
         var tools = new JsonArray();
         if (config.tools().localCode()) {
-            List.of("read", windows ? "powershell" : "bash", "edit", "write").forEach(tools::add);
+            List.of("read", shell(windows), "edit", "write").forEach(tools::add);
         }
         settings.add("defaultTools", tools);
         var retry = new JsonObject();

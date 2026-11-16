@@ -2,6 +2,8 @@ package dev.kizuna.agent;
 
 import dev.kizuna.agent.bridge.BridgeHost;
 import dev.kizuna.agent.config.AgentConfig;
+import dev.kizuna.agent.marks.AgentItems;
+import dev.kizuna.agent.marks.Marks;
 import net.fabricmc.api.ModInitializer;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
@@ -25,6 +27,7 @@ public final class AgentMod implements ModInitializer {
     public static final Logger LOGGER = LoggerFactory.getLogger("kizuna-agent");
     private static final String DATA_DIRECTORY = "kizuna-agent";
     private static final String CONNECTION_FILE = "bridge.json";
+    private static final String HOME_DIRECTORY = "pi-home";
 
     private static volatile BridgeHost host;
     private static volatile AgentConfig config;
@@ -35,11 +38,17 @@ public final class AgentMod implements ModInitializer {
         ServerLifecycleEvents.SERVER_STARTED.register(AgentMod::start);
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> stop());
         ServerTickEvents.END_SERVER_TICK.register(BridgeHost::tick);
+        AgentItems.register(AgentMod::marksOf);
     }
 
     /** 实例里放本模组数据的目录：解出来的 pi、Python 库、会话、工作目录。 */
     public static Path dataDirectory() {
         return FabricLoader.getInstance().getConfigDir().resolve(DATA_DIRECTORY);
+    }
+
+    /** 模组自己的 pi 配置目录：pi 的设置、系统提示词、助手的记忆和技能库都在这里，和玩家自己的 {@code ~/.pi} 无关。 */
+    public static Path homeDirectory() {
+        return dataDirectory().resolve(HOME_DIRECTORY);
     }
 
     public static Path configFile() {
@@ -61,6 +70,16 @@ public final class AgentMod implements ModInitializer {
         return Optional.ofNullable(problem);
     }
 
+    /** 这个玩家用指点杖标的点记在哪儿：只有单人世界的主人有。 */
+    private static Optional<Marks> marksOf(ServerPlayer player) {
+        BridgeHost current = host;
+        MinecraftServer server = player.level().getServer();
+        if (current == null || current.server() != server || !server.isSingleplayerOwner(player.nameAndId())) {
+            return Optional.empty();
+        }
+        return Optional.of(current.marks());
+    }
+
     private static void start(MinecraftServer server) {
         if (server.isDedicatedServer()) {
             return;
@@ -73,7 +92,8 @@ public final class AgentMod implements ModInitializer {
                 LOGGER.warn("{} 里缺这些键，先用默认值：{}", AgentConfig.FILE_NAME, String.join("、", loaded.missing()));
             }
             host = BridgeHost.open(server, () -> owner(server), player -> server.isSingleplayerOwner(player.nameAndId()),
-                    loaded.bridge().port(), loaded.bridge().blocksPerTickMillis(), dataDirectory().resolve(CONNECTION_FILE));
+                    loaded.bridge().port(), loaded.bridge().blocksPerTickMillis(), dataDirectory().resolve(CONNECTION_FILE),
+                    homeDirectory());
             config = loaded;
             LOGGER.info("游戏内接口已就绪：{}", host.url());
         } catch (IllegalArgumentException invalid) {

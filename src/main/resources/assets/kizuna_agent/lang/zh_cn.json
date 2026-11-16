@@ -1,0 +1,17 @@
+{
+  "itemGroup.kizuna_agent": "Kizuna Agent",
+  "item.kizuna_agent.pointer": "指点杖",
+  "item.kizuna_agent.pointer.tooltip.mark": "右键方块：标下这个位置，发给助手",
+  "item.kizuna_agent.pointer.tooltip.far": "右键远处：标准星指着的方块；指着天空就标脚下",
+  "item.kizuna_agent.pointer.tooltip.clear": "蹲下右键：清空标记",
+  "item.kizuna_agent.pointer.tooltip.use": "标完直接 /agent 说话，例如「在 1 和 2 之间砌一堵墙」",
+  "kizuna_agent.pointer.prefix": "指点杖 › ",
+  "kizuna_agent.pointer.marked": "已标记 #%s (%s, %s, %s) %s",
+  "kizuna_agent.pointer.marked_distant": "已标记 #%s (%s, %s, %s) %s（远处，约 %s 格）",
+  "kizuna_agent.pointer.marked_feet": "已标记 #%s (%s, %s, %s) 脚下",
+  "kizuna_agent.pointer.already": "这一格已经是 #%s",
+  "kizuna_agent.pointer.full": "标记已满 %s 个，蹲下右键清空后再标",
+  "kizuna_agent.pointer.cleared": "已清空 %s 个标记",
+  "kizuna_agent.pointer.nothing": "现在没有标记",
+  "kizuna_agent.pointer.unavailable": "指点杖只在单人世界里有用"
+}

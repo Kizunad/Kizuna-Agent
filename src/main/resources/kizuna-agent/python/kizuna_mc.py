@@ -9,6 +9,9 @@
     print(region.counts())
     mc.cmd("time set day")
     mc.undo()                                     # 撤回最近一次放的方块
+    for shot in mc.screenshot(orbit={"target": here, "distance": 16}):
+        print(shot.label, shot.file)              # 绕着拍四面，图存成文件
+    print(mc.marks())                             # 玩家用指点杖标的点
 
 只用标准库。连接信息先读环境变量 KIZUNA_MC_URL、KIZUNA_MC_TOKEN（助手跑脚本时已经设好），
 没有就读本文件上一级目录的 bridge.json（游戏开着单人世界时才有），所以自己在命令行里跑脚本也行。
@@ -127,6 +130,13 @@ class _Record(dict):
             raise AttributeError(name) from None
 
 
+def _plain(value):
+    """请求里的机位参数：坐标（Vec、元组）都换成列表。"""
+    if value is None:
+        return None
+    return {key: list(item) if isinstance(item, tuple) else item for key, item in value.items()}
+
+
 class Minecraft:
     def __init__(self, url=None, token=None):
         self._url = url
@@ -239,6 +249,25 @@ class Minecraft:
         for _ in range(times):
             restored += self.call("undo")["restored"]
         return restored
+
+    # ---- 截图、标记 ----
+
+    def screenshot(self, camera=None, orbit=None, hud=False, width=None):
+        """截游戏画面（不是桌面），存成图片文件：[.label（从哪儿往哪儿看）、.file（路径）、.width、.height、.notes（要留意的事）]。
+
+        不带参数是玩家现在的视角，不含 HUD；hud=True 连 HUD 和打开的界面一起截。
+        camera={"position": (x, y, z), "look_at": (x, y, z)}（或给 "yaw"、"pitch"，可加 "fov"）从指定机位看，玩家不动。
+        orbit={"target": (x, y, z), "distance": 16}（可加 "elevation" 角度、"sides": ["north", …]、"top": True）绕着一个点拍几面。
+        机位超出渲染距离会抛 BridgeError。"""
+        answer = self.call("screenshot", camera=_plain(camera), orbit=_plain(orbit), hud=hud or None, width=width)
+        return [_Record({key: value for key, value in shot.items() if key != "data"}) for shot in answer["shots"]]
+
+    def marks(self):
+        """玩家用指点杖标的点，按编号排：[.number、.block（Vec）、.dimension、.state、.face、.kind（block、distant、feet）]。"""
+        marks = [_Record(mark) for mark in self.call("marks")["marks"]]
+        for mark in marks:
+            mark["block"] = Vec(mark["block"])
+        return marks
 
     # ---- 模组 JAR ----
 

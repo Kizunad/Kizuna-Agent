@@ -28,6 +28,10 @@ import java.util.regex.Pattern;
  *
  * <p>玩家的话里带「{@value #ROLL_CALL}」时不走剧本，哪个模型都直接答一句「到」并报这是第几次，
  * 用来查换模型、调思考档位以后请求里的模型名和 {@code reasoning_effort}。</p>
+ *
+ * <p>话里带「{@value #NOTEBOOK}」时走第三版的剧本：记一条记忆 → 存一个带脚本的技能 → 读玩家标的点 →
+ * 绕着第 1 个点拍两张 → 截玩家的视角 → 读回技能 → 按技能里的脚本在第 1 个点上方放一块金块 → 说结果。
+ * 话里带「{@value #ONE_SHOT}」时只截一张玩家的视角就说结果。</p>
  */
 final class MockModel implements AutoCloseable {
     static final String PRIMARY = "primary-model";
@@ -37,6 +41,21 @@ final class MockModel implements AutoCloseable {
     static final String DEEP = "deep-model";
     static final String FIXED = "fixed-model";
     static final String ROLL_CALL = "报个到";
+    static final String NOTEBOOK = "演示第三版";
+    static final String ONE_SHOT = "只截一张";
+    /** 清单里登记成不能看图的那个模型。 */
+    static final String BLIND = "blind-model";
+    static final String MEMORY = "屋顶用深色橡木";
+    static final String SKILL = "stone-hut";
+    static final String SKILL_DESCRIPTION = "盖石砖小屋";
+    static final String NOTEBOOK_DONE = "第三版的几样都用过了。";
+    static final String SHOT_DONE = "截好了。";
+    /** 技能里的脚本把金块放在第 1 个标记上方这么高。 */
+    static final int GOLD_ABOVE_MARK = 5;
+    /** pi 把工具结果里的图片另放进一条玩家消息，开头是这句话。 */
+    private static final String ATTACHED = "Attached image(s) from tool result";
+    private static final Pattern MARK = Pattern.compile("#1 \\[(-?\\d+),\\s*(-?\\d+),\\s*(-?\\d+)]");
+    private static final Pattern SKILL_DIRECTORY = Pattern.compile("\\[技能目录 (.+?)；");
     /** 请求里没带 {@code reasoning_effort} 时记成这个。 */
     static final String NOT_SENT = "没发";
     static final String KEY = "mock-key-not-a-secret";
@@ -53,6 +72,12 @@ final class MockModel implements AutoCloseable {
     final List<String> asked = new CopyOnWriteArrayList<>();
     /** 收到的每个请求里一共带了几条消息，和 {@link #requests} 一一对应。 */
     final List<Integer> messages = new CopyOnWriteArrayList<>();
+    /** 收到的每个请求里的系统提示词，和 {@link #requests} 一一对应。 */
+    final List<String> systems = new CopyOnWriteArrayList<>();
+    /** 收到的每个请求里一共带了几张图，和 {@link #requests} 一一对应。 */
+    final List<Integer> images = new CopyOnWriteArrayList<>();
+    /** 收到的每个请求里最后一个工具结果的文字，和 {@link #requests} 一一对应；没有工具结果是空串。 */
+    final List<String> results = new CopyOnWriteArrayList<>();
     private final AtomicInteger rollCalls = new AtomicInteger();
     /** 请求头里带的密钥不对时记在这里。 */
     final List<String> problems = new CopyOnWriteArrayList<>();
@@ -80,6 +105,10 @@ final class MockModel implements AutoCloseable {
             efforts.add(request.has("reasoning_effort") ? request.get("reasoning_effort").getAsString() : NOT_SENT);
             asked.add(said);
             messages.add(request.getAsJsonArray("messages").size());
+            systems.add(systemText(request.getAsJsonArray("messages")));
+            images.add(request.getAsJsonArray("messages").toString().split("\"image_url\":", -1).length - 1);
+            List<String> turn = toolResults(request.getAsJsonArray("messages"));
+            results.add(turn.isEmpty() ? "" : turn.getLast());
             requests.add(model);
             if (!("Bearer " + KEY).equals(exchange.getRequestHeaders().getFirst("Authorization"))) {
                 problems.add("密钥没带对：" + exchange.getRequestHeaders().getFirst("Authorization"));
@@ -94,8 +123,16 @@ final class MockModel implements AutoCloseable {
             exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
             exchange.sendResponseHeaders(200, 0);
             OutputStream output = exchange.getResponseBody();
-            JsonObject step = said.contains(ROLL_CALL) ? text(rollCall(rollCalls.incrementAndGet()))
-                    : step(request.getAsJsonArray("messages"));
+            JsonObject step;
+            if (said.contains(ROLL_CALL)) {
+                step = text(rollCall(rollCalls.incrementAndGet()));
+            } else if (said.contains(NOTEBOOK)) {
+                step = notebook(turn);
+            } else if (said.contains(ONE_SHOT)) {
+                step = turn.isEmpty() ? call("mc_screenshot", "{}") : text(SHOT_DONE);
+            } else {
+                step = step(request.getAsJsonArray("messages"));
+            }
             boolean tool = step.has("tool_calls");
             chunk(output, model, step, null);
             chunk(output, model, new JsonObject(), tool ? "tool_calls" : "stop");
@@ -116,11 +153,95 @@ final class MockModel implements AutoCloseable {
         String said = "";
         for (JsonElement element : messages) {
             JsonObject message = element.getAsJsonObject();
-            if (message.get("role").getAsString().equals("user")) {
+            if (spoken(message)) {
                 said = message.get("content").toString();
             }
         }
         return said;
+    }
+
+    /** 玩家真说的话；pi 替工具结果带图片的那种「玩家消息」不算。 */
+    private static boolean spoken(JsonObject message) {
+        return message.get("role").getAsString().equals("user") && !message.get("content").toString().contains(ATTACHED);
+    }
+
+    private static String systemText(JsonArray messages) {
+        for (JsonElement element : messages) {
+            JsonObject message = element.getAsJsonObject();
+            if (message.get("role").getAsString().equals("system")) {
+                return message.get("content").isJsonPrimitive() ? message.get("content").getAsString() : message.get("content").toString();
+            }
+        }
+        return "";
+    }
+
+    /** 这一轮（最后一句玩家的话之后）回来的各个工具结果的文字，按先后。 */
+    private static List<String> toolResults(JsonArray messages) {
+        var results = new java.util.ArrayList<String>();
+        for (JsonElement element : messages) {
+            JsonObject message = element.getAsJsonObject();
+            if (spoken(message)) {
+                results.clear();
+            } else if (message.get("role").getAsString().equals("tool")) {
+                results.add(message.get("content").isJsonPrimitive() ? message.get("content").getAsString() : message.get("content").toString());
+            }
+        }
+        return results;
+    }
+
+    private static JsonObject notebook(List<String> results) {
+        return switch (results.size()) {
+            case 0 -> call("memory_save", "{\"text\":\"" + MEMORY + "\"}");
+            case 1 -> call("skill_save", GSON.toJson(skill()));
+            case 2 -> call("mc_marks", "{}");
+            case 3 -> {
+                int[] mark = firstMark(results.get(2));
+                yield call("mc_screenshot", "{\"orbit\":{\"target\":[%d,%d,%d],\"distance\":10,\"sides\":[\"north\"],\"top\":true}}"
+                        .formatted(mark[0], mark[1], mark[2]));
+            }
+            case 4 -> call("mc_screenshot", "{}");
+            case 5 -> call("skill_read", "{\"name\":\"" + SKILL + "\"}");
+            case 6 -> {
+                int[] mark = firstMark(results.get(2));
+                Matcher directory = SKILL_DIRECTORY.matcher(results.get(5));
+                var arguments = new JsonObject();
+                arguments.addProperty("file", (directory.find() ? directory.group(1) : "") + "/scripts/hut.py");
+                var values = new JsonArray();
+                values.add(String.valueOf(mark[0]));
+                values.add(String.valueOf(mark[1] + GOLD_ABOVE_MARK));
+                values.add(String.valueOf(mark[2]));
+                arguments.add("args", values);
+                yield call("run_python", GSON.toJson(arguments));
+            }
+            default -> text(NOTEBOOK_DONE);
+        };
+    }
+
+    private static int[] firstMark(String marks) {
+        Matcher mark = MARK.matcher(marks);
+        if (!mark.find()) {
+            throw new IllegalStateException("mc_marks 的结果里没有 #1：" + marks);
+        }
+        return new int[] {Integer.parseInt(mark.group(1)), Integer.parseInt(mark.group(2)), Integer.parseInt(mark.group(3))};
+    }
+
+    private static JsonObject skill() {
+        var file = new JsonObject();
+        file.addProperty("path", "scripts/hut.py");
+        file.addProperty("content", """
+                import sys
+                from kizuna_mc import mc
+                x, y, z = (int(value) for value in sys.argv[1:4])
+                print("changed", mc.set_block((x, y, z), "minecraft:gold_block").changed)
+                """);
+        var files = new JsonArray();
+        files.add(file);
+        var skill = new JsonObject();
+        skill.addProperty("name", SKILL);
+        skill.addProperty("description", SKILL_DESCRIPTION);
+        skill.addProperty("body", "1. mc_player 定位\n2. run_python 跑 scripts/hut.py，参数是 x y z");
+        skill.add("files", files);
+        return skill;
     }
 
     private static JsonObject step(JsonArray messages) {
@@ -130,7 +251,7 @@ final class MockModel implements AutoCloseable {
         for (JsonElement element : messages) {
             JsonObject message = element.getAsJsonObject();
             String role = message.get("role").getAsString();
-            if (role.equals("user")) {
+            if (spoken(message)) {
                 results = 0;
             } else if (role.equals("tool")) {
                 if (results == 0) {

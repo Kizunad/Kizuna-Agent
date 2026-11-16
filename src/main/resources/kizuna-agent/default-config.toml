@@ -16,6 +16,8 @@ fallback_model = ""
 thinking = "off"
 # 模型的上下文长度（token）。对话接近这个长度时自动压缩前文
 context_window = 200000
+# 模型能不能看图。能看图时，助手截的游戏画面直接发给它看；不能看图就写 false，截图只存成文件
+vision = true
 
 # 模型清单：每个模型一段 [[models]]，想加几个加几个；不写清单也能用。
 # 游戏里 /agent model <别名> 换模型，/agent thinking <档> 调现在这个模型的思考档位（会写回这个文件），都能按 Tab 补全。
@@ -26,7 +28,7 @@ context_window = 200000
 #                    不写：off、minimal、low、medium、high 五档，off 不发参数，其余照原名发。
 #                    off = "" 表示关思考时不发参数。
 #                    写成 {} 表示这个模型的思考档位由模型名决定，什么参数都不发，/agent thinking 对它不起作用。
-#   api、base_url、api_key、context_window  这个模型自己的接口；不写就用上面 [model] 的
+#   api、base_url、api_key、context_window、vision  这个模型自己的接口和能不能看图；不写就用上面 [model] 的
 #
 # [[models]]
 # alias = "gemini"
@@ -47,7 +49,8 @@ python = ""
 
 [tools]
 # 让助手动这台电脑：读写文件、跑 Python 脚本、跑 PowerShell（Linux 上是 bash）。
-# 关掉后助手只剩游戏内的工具：执行指令、读写方块、看模组 JAR
+# 关掉后助手只剩游戏内的工具：执行指令、读写方块、看模组 JAR、截游戏画面，以及它自己的记忆和技能
+# （记忆和技能只写在本模组的数据目录 config/kizuna-agent/pi-home/ 里，不算动电脑）
 local_code = true
 
 [bridge]

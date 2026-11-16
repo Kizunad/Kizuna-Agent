@@ -154,6 +154,30 @@ class PiHomeTest {
         assertFalse(Executables.atLeast("not a version", Executables.MINIMUM_NODE));
     }
 
+    @Test
+    void modelsThatCannotSeeAreRegisteredAsTextOnly() {
+        // vision = false 的模型只登记文字输入，pi 发请求时自己把图片换成一句说明；没写的照 [model] 的（默认能看）。
+        AgentConfig config = AgentConfig.parse("""
+                [model]
+                base_url = "http://127.0.0.1:8317/v1"
+                api_key = "secret-key"
+                model = "sees"
+
+                [[models]]
+                alias = "sees"
+                id = "vision-model"
+
+                [[models]]
+                alias = "blind"
+                id = "text-model"
+                vision = false
+                """);
+        JsonObject provider = PiHome.models(PiHome.endpoints(config, config.primary())).getAsJsonObject("providers")
+                .getAsJsonObject(PiHome.PROVIDER);
+        assertEquals("[\"text\",\"image\"]", provider.getAsJsonArray("models").get(0).getAsJsonObject().get("input").toString());
+        assertEquals("[\"text\"]", provider.getAsJsonArray("models").get(1).getAsJsonObject().get("input").toString());
+    }
+
     private static List<String> ids(JsonObject provider) {
         return provider.getAsJsonArray("models").asList().stream().map(model -> model.getAsJsonObject().get("id").getAsString()).toList();
     }

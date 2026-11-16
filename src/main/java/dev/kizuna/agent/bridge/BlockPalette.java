@@ -20,7 +20,7 @@ import java.util.Map;
  * 带内容的方块可以跟一段 NBT：{@code minecraft:chest[facing=east]{Items:[...]}}。
  * 没写的属性取默认值；读出来的写法总是把属性写全。</p>
  */
-final class BlockPalette {
+public final class BlockPalette {
     /** 调色板的一项：方块状态，和可选的方块实体数据。 */
     record Entry(BlockState state, CompoundTag nbt) {
     }
@@ -49,7 +49,7 @@ final class BlockPalette {
         return entries;
     }
 
-    static String write(BlockState state) {
+    public static String write(BlockState state) {
         return BlockStateParser.serialize(state);
     }
 

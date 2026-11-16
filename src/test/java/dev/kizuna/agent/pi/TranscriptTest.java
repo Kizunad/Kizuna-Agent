@@ -38,6 +38,29 @@ class TranscriptTest {
     }
 
     @Test
+    void newToolsShowWhatTheyAreDoing() {
+        // 截图说拍的是哪儿；记忆、技能、标记说对着什么。
+        start("mc_screenshot", "{}");
+        start("mc_screenshot", "{\"hud\":true}");
+        start("mc_screenshot", "{\"camera\":{\"position\":[10.5,70,3],\"look_at\":[0,64,0]}}");
+        start("mc_screenshot", "{\"orbit\":{\"target\":[110,73,210],\"distance\":18}}");
+        start("mc_marks", "{}");
+        start("memory_save", "{\"text\":\"屋顶用深色橡木\"}");
+        start("memory_forget", "{\"number\":3}");
+        start("skill_save", "{\"name\":\"stone-watchtower\",\"description\":\"x\",\"body\":\"y\"}");
+        start("skill_read", "{\"name\":\"stone-watchtower\",\"file\":\"scripts/build.py\"}");
+        start("run_python", "{\"file\":\"D:/mc/skills/stone-watchtower/scripts/build.py\",\"args\":[\"12\"]}");
+        assertEquals(List.of("截图：玩家的视角", "截图：玩家眼前的画面（含界面）", "截图：机位 [10.5, 70, 3]", "截图：绕 [110, 73, 210] 拍一圈",
+                "看玩家标的点", "记住：屋顶用深色橡木", "忘掉第 3 条记忆", "存技能：stone-watchtower",
+                "读技能：stone-watchtower scripts/build.py", "跑 Python 脚本：D:/mc/skills/stone-watchtower/scripts/build.py"),
+                lines.stream().map(Transcript.Line::text).toList());
+    }
+
+    private void start(String tool, String args) {
+        feed("{\"type\":\"tool_execution_start\",\"toolCallId\":\"c\",\"toolName\":\"" + tool + "\",\"args\":" + args + "}");
+    }
+
+    @Test
     void modelErrorsAreSaidOnceWhetherOrNotRetried() {
         // 不重试的错（密钥不对）在这一轮结束时说一次；会重试的由重试提示去说，重试用尽再说一次，不重复。
         feed("{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"stopReason\":\"error\",\"errorMessage\":\"401 invalid key\"}}");

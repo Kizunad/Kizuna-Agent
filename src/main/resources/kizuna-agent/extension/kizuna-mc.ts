@@ -1,10 +1,12 @@
 // Kizuna Agent 的 pi 扩展：把游戏内桥接接口做成 pi 的工具。
 // 连接信息由模组经环境变量给：KIZUNA_MC_URL、KIZUNA_MC_TOKEN。
 // KIZUNA_AGENT_LOCAL_CODE=1 时再注册 run_python（用 KIZUNA_MC_PYTHON 里的命令跑脚本）。
+// 每句话开头向游戏那头要一次「现在记着的事、有哪些技能」，接在系统提示词后面：
+// 记忆和技能刚存下就生效，开新对话也不用重启 pi。
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { spawn } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import * as http from "node:http";
 import * as path from "node:path";
 
@@ -93,18 +95,25 @@ function describeRegion(answer: any): string {
   return lines.join("\n");
 }
 
-function runPython(code: string, seconds: number, cwd: string, signal?: AbortSignal): Promise<string> {
+function saveScript(code: string, cwd: string): string {
   // 脚本存进工作目录的 scripts/ 再跑，方便事后再看、再改。
-  const command: string[] = JSON.parse(process.env.KIZUNA_MC_PYTHON ?? "[]");
-  if (command.length === 0) {
-    return Promise.reject(new Error("这台电脑上没找到 Python。请在 config/kizuna-agent.toml 的 [runtime] python 里填上路径"));
-  }
   const directory = path.join(cwd, "scripts");
   mkdirSync(directory, { recursive: true });
   const file = path.join(directory, `run-${new Date().toISOString().replace(/[:.]/g, "-")}.py`);
   writeFileSync(file, code, "utf-8");
+  return file;
+}
+
+function runPython(file: string, args: string[], seconds: number, cwd: string, signal?: AbortSignal): Promise<string> {
+  const command: string[] = JSON.parse(process.env.KIZUNA_MC_PYTHON ?? "[]");
+  if (command.length === 0) {
+    return Promise.reject(new Error("这台电脑上没找到 Python。请在 config/kizuna-agent.toml 的 [runtime] python 里填上路径"));
+  }
+  if (!existsSync(file)) {
+    return Promise.reject(new Error(`没有这个脚本文件：${file}`));
+  }
   return new Promise((resolve, reject) => {
-    const child = spawn(command[0], [...command.slice(1), file], {
+    const child = spawn(command[0], [...command.slice(1), file, ...args], {
       cwd,
       env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUTF8: "1" },
       windowsHide: true,
@@ -122,12 +131,28 @@ function runPython(code: string, seconds: number, cwd: string, signal?: AbortSig
       clearTimeout(timer);
       const output = Buffer.concat(chunks).toString("utf-8");
       const ending = killedBy ? `被中止（超过 ${seconds} 秒或被打断）` : `退出码 ${status}`;
-      resolve(`${output}\n[${ending}；脚本存在 ${file}]`);
+      resolve(`${output}\n[${ending}；脚本是 ${file}]`);
     });
   });
 }
 
+function describeShot(shot: any, index: number, total: number): string {
+  const head = total > 1 ? `图 ${index + 1}/${total}：` : "";
+  const notes = shot.notes.length ? `\n  注意：${shot.notes.join("；")}` : "";
+  return `${head}${shot.label}（${shot.width}×${shot.height}，存在 ${shot.file}）${notes}`;
+}
+
 export default function (pi: ExtensionAPI) {
+  pi.on("before_agent_start", async (event) => {
+    // 游戏那头连不上（世界刚关）就不加，这句话照常发。
+    try {
+      const context = await call("context", {});
+      return { systemPrompt: `${event.systemPrompt}\n\n${context.prompt}` };
+    } catch {
+      return undefined;
+    }
+  });
+
   pi.registerTool({
     name: "mc_command",
     label: "执行指令",
@@ -219,6 +244,129 @@ export default function (pi: ExtensionAPI) {
     parameters: Type.Object({}),
     async execute(_id, _params, signal) {
       return json(await call("undo", {}, signal));
+    },
+  });
+
+  pi.registerTool({
+    name: "mc_screenshot",
+    label: "截图",
+    description: "截游戏画面（不是桌面），图直接给你看，同时存成文件。不带参数：玩家现在的视角，不含 HUD。"
+      + "camera：从指定机位看，玩家不动；orbit：绕着一个点拍几面，核对建筑用它；hud 为 true：连 HUD 和打开的界面一起截。"
+      + "机位超出渲染距离、目标没加载时不截，会说明原因；截出来可能有问题的（机位在方块里、靠近加载边缘）随图注明。",
+    parameters: Type.Object({
+      camera: Type.Optional(Type.Object({
+        position: Type.Array(Type.Number(), { minItems: 3, maxItems: 3, description: "机位 [x, y, z]，可以带小数；放在空气里" }),
+        look_at: Type.Optional(Type.Array(Type.Number(), { minItems: 3, maxItems: 3, description: "看向哪个点 [x, y, z]；和 yaw/pitch 二选一" })),
+        yaw: Type.Optional(Type.Number({ description: "0 朝南(+z)、90 朝西(-x)、180 朝北、-90 朝东" })),
+        pitch: Type.Optional(Type.Number({ description: "-90 抬头看天 到 90 低头看地，缺省 0" })),
+        fov: Type.Optional(Type.Number({ description: "视野角 30–110，缺省用玩家设置的" })),
+      }, { description: "单个机位" })),
+      orbit: Type.Optional(Type.Object({
+        target: Type.Array(Type.Number(), { minItems: 3, maxItems: 3, description: "围着哪个点看，一般取建筑的中心" }),
+        distance: Type.Number({ description: "机位离 target 多少格；要能把建筑装进画面，一般取建筑最长边的 1 到 1.5 倍" }),
+        elevation: Type.Optional(Type.Number({ description: "机位抬高的角度，缺省 25" })),
+        sides: Type.Optional(Type.Array(Type.String(), { description: "机位在目标的哪几面：north、east、south、west；缺省四面都拍" })),
+        top: Type.Optional(Type.Boolean({ description: "再加一张正上方俯视" })),
+        fov: Type.Optional(Type.Number()),
+      }, { description: "绕着一个点拍几面" })),
+      hud: Type.Optional(Type.Boolean({ description: "true：玩家眼前的画面原样，含 HUD 和打开的界面；不能和 camera、orbit 同用" })),
+      width: Type.Optional(Type.Integer({ description: "图片宽度（像素），320–1920；缺省单张 960、绕拍每张 768" })),
+    }),
+    async execute(_id, params, signal, _onUpdate, ctx) {
+      const answer = await call("screenshot", params, signal);
+      const shots: any[] = answer.shots;
+      const lines = shots.map((shot, index) => describeShot(shot, index, shots.length));
+      if (ctx.model && !ctx.model.input.includes("image")) {
+        lines.push("现在这个模型不能看图（配置里它的 vision 是 false），所以图没有发给你，只存成了上面的文件。"
+          + "告诉玩家图存在哪儿；要核对建筑请改用 mc_get_blocks，或请玩家用 /agent model 换一个能看图的模型。");
+        return text(lines.join("\n"));
+      }
+      const content: any[] = [{ type: "text" as const, text: lines.join("\n") }];
+      for (const shot of shots) content.push({ type: "image" as const, data: shot.data, mimeType: shot.mime });
+      return { content, details: {} };
+    },
+  });
+
+  pi.registerTool({
+    name: "mc_marks",
+    label: "看标记",
+    description: "玩家用指点杖标的点：编号、方块坐标、维度、那一格是什么方块、点的是哪个面、是怎么标的"
+      + "（block 右键的方块、distant 远处指的、feet 玩家当时脚下）。玩家说「#1」「这几个点」指的就是它们。",
+    parameters: Type.Object({}),
+    async execute(_id, _params, signal) {
+      const answer = await call("marks", {}, signal);
+      if (answer.marks.length === 0) return text("玩家现在没有标任何点。");
+      return text(answer.marks.map((mark: any) =>
+        `#${mark.number} ${JSON.stringify(mark.block)} ${mark.state}  ${mark.dimension}  ${mark.kind}${mark.face ? `，点的是 ${mark.face} 面` : ""}`).join("\n"));
+    },
+  });
+
+  pi.registerTool({
+    name: "memory_save",
+    label: "记住",
+    description: "往全局记忆里记一条：跨对话、跨世界都在，每段对话开头自动带上。玩家说「记住」「以后都…」，或你摸索出以后还用得上的偏好、坐标、坑，就记。"
+      + "一条只写一件事，一句话，带上必要的坐标和 id。",
+    parameters: Type.Object({ text: Type.String({ description: "要记的那句话，最多 300 字" }) }),
+    async execute(_id, params, signal) {
+      const answer = await call("memory/save", params, signal);
+      const nearly = answer.count >= answer.limit - 10 ? `；已有 ${answer.count} 条，上限 ${answer.limit}，找机会删掉过时的、合并相近的` : "";
+      return text(`记下了，是第 ${answer.number} 条${nearly}`);
+    },
+  });
+
+  pi.registerTool({
+    name: "memory_forget",
+    label: "忘掉",
+    description: "删掉全局记忆里的一条。number 是「你记着的事」里的序号；删掉后后面各条的序号往前挪。",
+    parameters: Type.Object({ number: Type.Integer({ description: "第几条，从 1 数起" }) }),
+    async execute(_id, params, signal) {
+      const answer = await call("memory/forget", params, signal);
+      return text(`已删掉：${answer.removed}（还剩 ${answer.count} 条）`);
+    },
+  });
+
+  pi.registerTool({
+    name: "skill_save",
+    label: "存技能",
+    description: "把一套做法存成技能（SKILL.md，可带脚本和参考资料），以后每段对话都能按名字调出来用。同名的会被覆盖，用来改进已有技能。",
+    parameters: Type.Object({
+      name: Type.String({ description: "小写英文、数字和连字符，例如 stone-watchtower" }),
+      description: Type.String({ description: "一两句话：做什么、什么时候用。以后靠它判断要不要用这个技能" }),
+      body: Type.String({ description: "SKILL.md 正文（Markdown）：步骤、参数、要注意的事、怎么跑带的脚本" }),
+      files: Type.Optional(Type.Array(Type.Object({
+        path: Type.String({ description: "技能目录里的相对路径，例如 scripts/build.py" }),
+        content: Type.String(),
+      }), { description: "随技能存的文件：脚本、参考资料" })),
+    }),
+    async execute(_id, params, signal) {
+      const answer = await call("skills/save", params, signal);
+      return text(`${answer.updated ? "已更新" : "已存下"}技能 ${answer.name}（目录 ${answer.directory}）。现在共 ${answer.count} 个技能`);
+    },
+  });
+
+  pi.registerTool({
+    name: "skill_read",
+    label: "读技能",
+    description: "读一个技能的全文（SKILL.md），并列出它带的文件。给 file 就读它带的那个文件。用技能之前先读。",
+    parameters: Type.Object({
+      name: Type.String(),
+      file: Type.Optional(Type.String({ description: "技能带的文件的相对路径，例如 scripts/build.py" })),
+    }),
+    async execute(_id, params, signal) {
+      const answer = await call("skills/read", params, signal);
+      const files = answer.files.length ? `带的文件：${answer.files.join("、")}` : "没有带别的文件";
+      return text(`${answer.text}\n\n[技能目录 ${answer.directory}；${files}]`);
+    },
+  });
+
+  pi.registerTool({
+    name: "skill_delete",
+    label: "删技能",
+    description: "删掉一个技能，连它带的文件一起。",
+    parameters: Type.Object({ name: Type.String() }),
+    async execute(_id, params, signal) {
+      const answer = await call("skills/delete", params, signal);
+      return text(`已删掉技能 ${params.name}，还剩 ${answer.count} 个`);
     },
   });
 
@@ -327,16 +475,23 @@ export default function (pi: ExtensionAPI) {
     pi.registerTool({
       name: "run_python",
       label: "跑 Python",
-      description: "在这台电脑上跑一段 Python 脚本，返回输出。脚本里 `from kizuna_mc import mc` 就能操作游戏："
+      description: "在这台电脑上跑 Python，返回输出。给 code 跑一段现写的脚本，或给 file 跑一个已有的脚本文件（技能里带的、以前存下的）。"
+        + "脚本里 `from kizuna_mc import mc` 就能操作游戏："
         + "mc.player()、mc.get_blocks(a, b)、mc.set_blocks(origin, [((dx,dy,dz), 方块)…])、mc.fill(a, b, 方块)、mc.clone(...)、"
-        + "mc.undo()、mc.cmd(指令)、mc.mods()、mc.jar_list/jar_read/jar_json/jar_search/jar_classes/jar_class。"
-        + "大的、有规律的建筑（圆、拱、螺旋、重复的构件）用它算坐标，比手写方块列表可靠。库的完整说明在 ../python/kizuna_mc.py 开头，示例在 ../python/examples/。",
+        + "mc.undo()、mc.cmd(指令)、mc.screenshot(...)、mc.marks()、mc.mods()、mc.jar_list/jar_read/jar_json/jar_search/jar_classes/jar_class。"
+        + "大的、有规律的建筑（圆、拱、螺旋、重复的构件）用它算坐标，比手写方块列表可靠。库的完整说明在 kizuna_mc.py 开头（位置见系统提示词）。",
       parameters: Type.Object({
-        code: Type.String({ description: "完整的 Python 脚本" }),
+        code: Type.Optional(Type.String({ description: "完整的 Python 脚本；和 file 二选一" })),
+        file: Type.Optional(Type.String({ description: "已有脚本文件的路径；和 code 二选一" })),
+        args: Type.Optional(Type.Array(Type.String(), { description: "传给脚本的命令行参数" })),
         timeout_seconds: Type.Optional(Type.Integer({ description: `缺省 ${PYTHON_TIMEOUT_SECONDS}` })),
       }),
       async execute(_id, params, signal, _onUpdate, ctx) {
-        return text(await runPython(params.code, params.timeout_seconds ?? PYTHON_TIMEOUT_SECONDS, ctx.cwd, signal));
+        if ((params.code === undefined) === (params.file === undefined)) {
+          throw new Error("code 和 file 要给一个，且只给一个");
+        }
+        const file = params.file !== undefined ? path.resolve(ctx.cwd, params.file) : saveScript(params.code!, ctx.cwd);
+        return text(await runPython(file, params.args ?? [], params.timeout_seconds ?? PYTHON_TIMEOUT_SECONDS, ctx.cwd, signal));
       },
     });
   }

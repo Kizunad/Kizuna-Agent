@@ -1,0 +1,7 @@
+{
+  "required": true,
+  "package": "dev.kizuna.agent.clienttest.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "client": ["ForeignCameraMixin"],
+  "injectors": {"defaultRequire": 1}
+}

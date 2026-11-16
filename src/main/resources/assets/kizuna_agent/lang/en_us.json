@@ -1,0 +1,17 @@
+{
+  "itemGroup.kizuna_agent": "Kizuna Agent",
+  "item.kizuna_agent.pointer": "Pointer Staff",
+  "item.kizuna_agent.pointer.tooltip.mark": "Right-click a block: mark it for the assistant",
+  "item.kizuna_agent.pointer.tooltip.far": "Right-click far away: mark the block under the crosshair; aiming at the sky marks your feet",
+  "item.kizuna_agent.pointer.tooltip.clear": "Sneak + right-click: clear all marks",
+  "item.kizuna_agent.pointer.tooltip.use": "Then just /agent, e.g. \"build a wall between 1 and 2\"",
+  "kizuna_agent.pointer.prefix": "Pointer › ",
+  "kizuna_agent.pointer.marked": "Marked #%s (%s, %s, %s) %s",
+  "kizuna_agent.pointer.marked_distant": "Marked #%s (%s, %s, %s) %s (far, about %s blocks away)",
+  "kizuna_agent.pointer.marked_feet": "Marked #%s (%s, %s, %s) at your feet",
+  "kizuna_agent.pointer.already": "This block is already #%s",
+  "kizuna_agent.pointer.full": "All %s marks are used; sneak + right-click to clear them first",
+  "kizuna_agent.pointer.cleared": "Cleared %s marks",
+  "kizuna_agent.pointer.nothing": "There are no marks",
+  "kizuna_agent.pointer.unavailable": "The pointer staff only works in a single-player world"
+}

@@ -171,6 +171,41 @@ class AgentConfigTest {
     }
 
     @Test
+    void visionDefaultsToTrueAndCanBeTurnedOffPerModel() {
+        // 没写 vision：能看图。[model] 里关掉，清单里没单独写的跟着关；清单里单独写的各算各的。
+        assertTrue(AgentConfig.parse("""
+                [model]
+                base_url = "http://127.0.0.1:8317/v1"
+                api_key = "secret-key"
+                model = "anything"
+                """).primary().vision());
+        AgentConfig config = AgentConfig.parse("""
+                [model]
+                base_url = "http://127.0.0.1:8317/v1"
+                api_key = "secret-key"
+                model = "plain"
+                vision = false
+
+                [[models]]
+                alias = "plain"
+                id = "text-model"
+
+                [[models]]
+                alias = "eyes"
+                id = "vision-model"
+                vision = true
+                """);
+        assertFalse(config.choice("plain").vision());
+        assertTrue(config.choice("eyes").vision());
+        assertFalse(config.choice("not-listed").vision());
+        assertListError("""
+                [[models]]
+                id = "x"
+                vision = "yes"
+                """, "vision", "true 或 false");
+    }
+
+    @Test
     void wrongListEntriesSayWhichOneAndWhy() {
         // 清单写错了：报是第几个 [[models]]、错在哪儿。
         assertListError("[[models]]\nalias = \"a\"\n", "第 1 个 [[models]]", "id");
